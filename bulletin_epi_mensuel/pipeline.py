@@ -1,14 +1,6 @@
 import papermill as pm
 from openhexa.sdk import current_run, pipeline
 
-  "parameters": {
-    "annee": 2023,
-    "week_start": 4,
-    "week_end": 9,
-    "month_name": "Février",
-    "month_num": 2
-  }
-
 @pipeline("bulletin-epi-mensuel", name="Bulletin épidémiologique mensuel")
 @parameter(
     "get_annee",
