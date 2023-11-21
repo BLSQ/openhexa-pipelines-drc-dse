@@ -1,5 +1,9 @@
+import os
+
 import papermill as pm
-from openhexa.sdk import current_run, pipeline
+
+from datetime import date, datetime
+from openhexa.sdk import current_run, parameter, pipeline, workspace
 
 @pipeline("bulletin-epi-mensuel", name="Bulletin épidémiologique mensuel")
 @parameter(
@@ -74,6 +78,7 @@ def run_papermill_script(in_nb, out_nb_dir, parameters, *args, **kwargs):
     out_nb = f"{out_nb_dir}{os.path.basename(in_nb)}_OUTPUT_{execution_timestamp}.ipynb"
 
     pm.execute_notebook(in_nb, out_nb, parameters)
+    
     return   
 
 if __name__ == "__main__":
