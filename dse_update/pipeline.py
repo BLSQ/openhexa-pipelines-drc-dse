@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -8,112 +9,124 @@ from papermill import PapermillExecutionError
 """
 Actualisation des données DSE
 
-Ce pipeline OpenHexa permet de mettre à jour les tables de la base de données. Il utilise en entrée deux fichiers : un fichier CSV pour les données de base de la DSE (Direction de la Surveillance Épidémiologique) et un fichier XLSX pour les données de complétude.
-Le pipeline suit ces étapes :
-Validation des entrées : Il vérifie que le fichier DSE est bien un .csv et que le fichier de complétude est un .xlsx, et que les deux fichiers existent.
-Exécution du Notebook Jupyter : Il orchestre l'exécution d'un notebook Jupyter spécifique (LAUNCHER.ipynb) via Papermill. Les chemins des fichiers d'entrée sont passés en paramètres à ce notebook.
-La logique détaillée de la mise à jour des tables de la base de données est contenue dans le notebook Jupyter LAUNCHER.ipynb, le pipeline Python agissant
-comme un orchestrateur qui valide les entrées et déclenche le processu de mise à jour.
+Ce pipeline OpenHexa met à jour les tables de la base de données à partir de deux fichiers: 
+un fichier CSV pour les données de base de la DSE (Direction de la Surveillance Épidémiologique) et 
+un fichier XLSX pour la complétude. 
+
+Le pipeline suit ces étapes:
+
+-Validation des entrées: vérification du format et de l'existence des fichiers.
+-Exécution automatisée de notebooks Jupyter via Papermill, avec passage des chemins des fichiers en paramètres.
+-La logique de mise à jour des tables de la base de données est intégrée dans ce pipeline, qui orchestre et 
+  déclenche le processus à partir des données importées chaque semaine
 """
+
+# Ticket:
+# -https://bluesquare.atlassian.net/browse/PATHEOC-373
+# Github:
+# -https://github.com/BLSQ/openhexa-pipelines-drc-dse
 
 
 @pipeline("dse_update")
 @parameter(
     "dse_file",
-    name="DSE base de donnees (.csv)",
+    name="Base de donnees DSE (.csv)",
     type=File,
-    required=False,  # ----------------------------------------------------------------------------------------------------------------------------------------------
+    required=True,
     default=None,
-    help="Selectionnez un fichier .csv dans le dossier correspondant contenant les donnees de base de la DSE.",
+    help="Selectionnez un fichier .csv dans le dossier: 'tdb-suivi-epidemio/data/raw/DSE_data_YYYY/'",
 )
 @parameter(
     "completude_file",
     name="Fichier de completude (.xlsx)",
     type=File,
-    required=False,  # ----------------------------------------------------------------------------------------------------------------------------------------------
+    required=True,
     default=None,
-    help="Selectionnez un fichier .xlsx dans le dossier correspondant contenant les donnees de completude de la DSE.",
+    help="Selectionnez un fichier .xlsx dans le dossier: 'tdb-suivi-epidemio/data/raw/Completude/YYYY/'",
 )
 def dse_update(dse_file: File, completude_file: File):
     """Write your pipeline orchestration here.
 
     Pipeline functions should only call tasks and should never perform IO operations or expensive computations.
     """
-    pipeline_path = Path(workspace.files_path) / "tdb-suivi-epidemio"
     current_run.log_info("Demarrage de la mise a jour de la base de donnees DSE...")
-
-    dse_file = File(
-        type="csv",
-        name="2026_Database_Week05.csv",
-        path=(pipeline_path / "data/raw/DSE_data_2026/2026_Database_Week05.csv").as_posix(),
-        size=12,  # Replace with actual file size in bytes
-    )
-    completude_file = File(
-        type="csv",
-        name="2026_Database_Week05.csv",
-        path=(pipeline_path / "data/raw/Completude/2026/COMPLETUDE PROMPTITUDE SURVEILLANCE_Week05.xlsx").as_posix(),
-        size=12,  # Replace with actual file size in bytes
-    )
-
-    output_dir = pipeline_path / "papermill-outputs-V2"
+    pipeline_path = Path(workspace.files_path) / "tdb-suivi-epidemio"
+    notebook_path = pipeline_path / "DSE_update_notebooks"
+    superset_nb_path = pipeline_path / "superset_scripts"
+    output_dir = pipeline_path / "papermill-outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Check the file name year reference match that of the folder (hardcoded data paths require this consistency):
+    match = re.match(r"(\d{4})_", dse_file.name)
+    if match:
+        year = match.group(1)
+
+    # Build input paths:
+    dse_input_file = pipeline_path / "data" / "raw" / f"DSE_data_{year}" / dse_file.name
+    completude_input_file = pipeline_path / "data" / "raw" / "Completude" / f"{year}" / completude_file.name
+
+    # ---------- input files validation ---------- #
     validate_inputs(
-        pipeline_path=pipeline_path,
-        dse_file=Path(dse_file.path),
-        completude_file=Path(completude_file.path),
+        notebook_path=notebook_path,
+        dse_file=dse_input_file,
+        completude_file=completude_input_file,
         output_dir=output_dir,
     )
 
+    # ---------- data processing ---------- #
     run_notebook(
-        nb_path=pipeline_path / "01_process_mapepi_dse_V2.ipynb",
+        nb_path=notebook_path / "01_process_mapepi_dse.ipynb",
         out_nb_path=output_dir,
-        parameters={"nouvelles_donnees_path": dse_file.path},
+        parameters={"nouvelles_donnees_path": dse_input_file.as_posix()},
     )
 
     run_notebook(
-        nb_path=pipeline_path / "02_malaria_data_for_pnlp_tdb_V2.ipynb",
+        nb_path=notebook_path / "02_malaria_data_for_pnlp_tdb.ipynb",
         out_nb_path=output_dir,
-        parameters={"nouvelles_donnees_path": dse_file.path},
+        parameters={"nouvelles_donnees_path": dse_input_file.as_posix()},
     )
 
     run_notebook(
-        nb_path=pipeline_path / "03_completude_V2.ipynb",
+        nb_path=notebook_path / "03_completude.ipynb",
         out_nb_path=output_dir,
-        parameters={"nouvelle_completude_path": completude_file.path},
+        parameters={"nouvelle_completude_path": completude_input_file.as_posix()},
     )
 
-    # run_notebook(
-    #     nb_path=pipeline_path / "04_PNLP_dataset_update.ipynb",
-    #     out_nb_path=output_dir,
-    #     parameters={"nouvelles_donnees_path": dse_file.path},
-    #     kernel_name="python3",
-    # )
+    run_notebook(
+        nb_path=notebook_path / "04_PNLP_dataset_update.ipynb",
+        out_nb_path=output_dir,
+        parameters={"nouvelles_donnees_path": dse_input_file.as_posix()},
+        kernel_name="python3",
+    )
 
-    # run_notebook(
-    #     nb_path=pipeline_path / "05_COUSP_dataset_update.ipynb",
-    #     out_nb_path=output_dir,
-    #     parameters={"nouvelles_donnees_path": dse_file.path},
-    # )
+    run_notebook(
+        nb_path=notebook_path / "05_COUSP_dataset_update.ipynb",
+        out_nb_path=output_dir,
+        parameters={"nouvelles_donnees_path": dse_input_file.as_posix()},
+        kernel_name="python3",
+    )
 
     # ---------- Superset updates ---------- #
-    # run_notebook(
-    #     nb_path=pipeline_path / "DSE_Surv_Epi_Complete_agg_update.ipynb",
-    #     out_nb_path=output_dir,
-    # )
+    run_notebook(
+        nb_path=superset_nb_path / "DSE_Surv_Epi_Complete_agg_update.ipynb",
+        out_nb_path=output_dir,
+        kernel_name="python3",
+    )
 
-    # run_notebook(
-    #     nb_path=pipeline_path / "DSE_Surv_Epi_Complete_agg_ss_update.ipynb",
-    #     out_nb_path=output_dir,
-    # )
+    run_notebook(
+        nb_path=superset_nb_path / "DSE_Surv_Epi_Complete_agg_ss_update.ipynb",
+        out_nb_path=output_dir,
+        kernel_name="python3",
+    )
 
 
-def validate_inputs(pipeline_path: Path, dse_file: Path, completude_file: Path, output_dir: Path):
+def validate_inputs(notebook_path: Path, dse_file: Path, completude_file: Path, output_dir: Path):
     """Validate the existence and file type of the DSE and complétude files.
 
     Parameters
     ----------
-    pipeline_path : Path
-        Path to the pipeline directory, used for logging and output management.
+    notebook_path : Path
+        Path to the notebooks directory, used for logging and output management.
     dse_file : Path
         Path to the DSE .csv file.
     completude_file : Path
@@ -126,22 +139,36 @@ def validate_inputs(pipeline_path: Path, dse_file: Path, completude_file: Path, 
     ValueError
         If either file does not exist or has an incorrect extension.
     """
-    if not dse_file.exists() or dse_file.suffix.lower() != ".csv":
-        current_run.log_error(f"Le fichier DSE doit être un fichier .csv valide. Chemin fourni: {dse_file}")
+    if not dse_file.exists():
+        current_run.log_error(
+            f"Impossible de trouver le fichier dans le dossier correspondant {dse_file.parent}. "
+            "Vérifiez que le dossier existe et contient bien le fichier DSE. "
+            f"Chemin fourni: {dse_file}"
+        )
         raise ValueError
-    if not completude_file.exists() or completude_file.suffix.lower() != ".xlsx":
-        current_run.log_error(f"Le fichier de complétude doit être un fichier .xlsx valide. Chemin fourni: {completude_file}")
+    if dse_file.suffix.lower() != ".csv":
+        current_run.log_error(f"Le fichier DSE doit être un fichier .csv valide. fichier fourni: {dse_file.name}")
+        raise ValueError
+    if not completude_file.exists():
+        current_run.log_error(
+            f"Impossible de trouver le fichier dans le dossier correspondant {completude_file.parent}. "
+            "Vérifiez que le dossier existe et contient bien le fichier DSE. "
+            f" Chemin fourni: {completude_file}"
+        )
+        raise ValueError
+    if completude_file.suffix.lower() != ".xlsx":
+        current_run.log_error(f"Le fichier de complétude doit être un fichier .xlsx valide. fichier fourni: {completude_file.name}")
         raise ValueError
 
     notebooks_to_run = [
         {
-            "notebook": pipeline_path / "00_validate_mapepi_csv_V2.ipynb",
+            "notebook": notebook_path / "00_validate_mapepi_csv.ipynb",
             "params": {"nouvelles_donnees_path": dse_file.as_posix()},
             "file_name": dse_file.name,
             "kernel_name": "python3",
         },
         {
-            "notebook": pipeline_path / "00_validate_completude_V2.ipynb",
+            "notebook": notebook_path / "00_validate_completude.ipynb",
             "params": {"nouvelles_completude_path": completude_file.as_posix()},
             "file_name": completude_file.name,
             "kernel_name": "ir",
@@ -150,6 +177,7 @@ def validate_inputs(pipeline_path: Path, dse_file: Path, completude_file: Path, 
 
     for nb in notebooks_to_run:
         try:
+            current_run.log_debug(f"Validation du fichier: {nb['file_name']} via le notebook: {nb['notebook'].name}")
             run_notebook(
                 nb_path=nb["notebook"],
                 out_nb_path=output_dir,
@@ -168,7 +196,7 @@ def validate_inputs(pipeline_path: Path, dse_file: Path, completude_file: Path, 
 def run_notebook(
     nb_path: Path,
     out_nb_path: Path,
-    parameters: dict,
+    parameters: dict | None = None,
     kernel_name: str = "ir",
 ):
     """Execute a Jupyter notebook using Papermill.
@@ -192,8 +220,11 @@ def run_notebook(
     current_run.log_info(f"Exécution du notebook: {nb_path.name}")
     file_stem = nb_path.stem
     extension = nb_path.suffix
-    execution_timestamp = datetime.now().strftime("%Y%m%d")
+    execution_timestamp = datetime.now().strftime("%Y")
     out_nb_full_path = out_nb_path / f"{file_stem}_OUTPUT_{execution_timestamp}{extension}"
+
+    if parameters:
+        current_run.log_debug(f"Parameters : {parameters}")
 
     try:
         pm.execute_notebook(
@@ -205,32 +236,11 @@ def run_notebook(
             progress_bar=False,
         )
     except PapermillExecutionError:
-        current_run.log_error(f"Veuillez vérifier le notebook de sortie pour détecter d'eventuelles erreurs: {out_nb_full_path.name} ")
+        current_run.log_error(f"Veuillez vérifier le notebook de sortie pour détecter d'eventuelles erreurs: {out_nb_full_path.name}")
         raise
     except Exception as e:
         current_run.log_error(f"Erreur lors de l'exécution du notebook: {nb_path.name}: {e}")
         raise
-
-
-# def compute_output_name(nb_path: Path, out_nb_path: Path) -> Path:
-#     """Generate an output file path for a notebook execution, appending a timestamp to the filename.
-
-#     Parameters
-#     ----------
-#     nb_path : Path
-#         Path to the input notebook file.
-#     out_nb_path : Path
-#         Directory where the output notebook will be saved.
-
-#     Returns
-#     -------
-#     Path
-#         Full path to the output notebook file with a timestamp in its name.
-#     """
-#     file_stem = nb_path.stem
-#     extension = nb_path.suffix
-#     execution_timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-#     return out_nb_path / f"{file_stem}_OUTPUT_{execution_timestamp}{extension}"
 
 
 if __name__ == "__main__":
