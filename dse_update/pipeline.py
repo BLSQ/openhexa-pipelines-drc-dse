@@ -220,7 +220,7 @@ def run_notebook(
     current_run.log_info(f"Exécution du notebook: {nb_path.name}")
     file_stem = nb_path.stem
     extension = nb_path.suffix
-    execution_timestamp = datetime.now().strftime("%Y")
+    execution_timestamp = datetime.now().strftime("%Y%m%d")
     out_nb_full_path = out_nb_path / f"{file_stem}_OUTPUT_{execution_timestamp}{extension}"
 
     if parameters:
