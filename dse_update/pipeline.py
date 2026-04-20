@@ -60,6 +60,9 @@ def dse_update(dse_file: File, completude_file: File):
     match = re.match(r"(\d{4})_", dse_file.name)
     if match:
         year = match.group(1)
+    else:
+        current_run.log_error("Le nom du fichier DSE doit commencer par une référence d'année au format 'YYYY_' (ex: 2026_Database_Week01.csv). ")
+        raise ValueError
 
     # Build input paths:
     dse_input_file = pipeline_path / "data" / "raw" / f"DSE_data_{year}" / dse_file.name
